@@ -1,7 +1,7 @@
 import ply.lex as lex
 
 # =============================================================================
-# ANALIZADOR LÉXICO — SecureAccessLang
+# ANALIZADOR LÉXICO — SecureAccessLang 
 # =============================================================================
 # El analizador léxico (lexer) es la primera etapa del análisis. Su trabajo es
 # leer el texto de entrada carácter por carácter y agruparlos en unidades con
@@ -31,14 +31,6 @@ reserved = {
     'desactivar':   'DESACTIVAR',
     'permitir':     'PERMITIR',
     'denegar':      'DENEGAR',
-    'leer':         'LEER',
-    'escribir':     'ESCRIBIR',
-    'eliminar':     'ELIMINAR',
-    'acceder':      'ACCEDER',
-    'dashboard':    'DASHBOARD',
-    'usuarios':     'USUARIOS',
-    'reportes':     'REPORTES',
-    'configuracion':'CONFIGURACION',
 }
 
 # -----------------------------------------------------------------------------
@@ -61,16 +53,17 @@ t_ignore = ' \t'
 # -----------------------------------------------------------------------------
 # 4. REGLA PARA IDENTIFICADORES
 # -----------------------------------------------------------------------------
-# PLY lee la expresión regular directamente del docstring de la función (r'...').
-# Esta regex captura: una letra minúscula seguida de cero o más letras/dígitos.
-# Ejemplos válidos: "juan", "admin", "password123", "a"
-# Ejemplos inválidos: "Juan" (mayúscula), "123abc" (empieza con número)
+# Regex ampliada para aceptar cualquier combinación de letras (mayúsculas y
+# minúsculas), dígitos y caracteres especiales comunes en contraseñas.
 #
-# Después de capturar la palabra, se verifica si está en el diccionario de
-# palabras reservadas. Si está → se le asigna el tipo reservado (ej: USUARIO).
-# Si no está → queda como ID genérico.
+# Esto unifica en un solo token ID tanto los nombres de usuario/rol como
+# las contraseñas, las acciones y los recursos. El parser distingue su
+# rol según la posición en la gramática.
+#
+# Si el valor capturado es una palabra reservada, reserved.get() lo eleva
+# al tipo correspondiente (ej: "login" → LOGIN). Si no, queda como ID.
 def t_ID(t):
-    r'[a-z][a-z0-9]*'
+    r'[A-Za-z0-9_@#$!]+'
     t.type = reserved.get(t.value, 'ID')
     return t
 
@@ -113,7 +106,24 @@ lexer = lex.lex()
 # ZONA DE PRUEBAS
 # -----------------------------------------------------------------------------
 if __name__ == '__main__':
-    data = "usuario juan asignar admin \n login juan password123"
-    lexer.input(data)
-    for tok in lexer:
-        print(tok)
+    casos = [
+        "usuario juan asignar admin",
+        "login juan password123",
+        "logout juan",
+        "mfa juan activar",
+        "permitir admin acceder dashboard",
+        "denegar invitado eliminar usuarios",
+        "login juan SECRET",        
+        "login juan 123456",        
+        "login juan Admin2026",     
+        "login juan P@ss_1",        
+        "permitir editor escribir archivos",
+        "permitir dev ejecutar pipeline",
+    ]
+
+    for data in casos:
+        print(f"\nEntrada: {repr(data)}")
+        lexer.lineno = 1
+        lexer.input(data)
+        for tok in lexer:
+            print(f"  {tok}")
