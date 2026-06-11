@@ -175,12 +175,14 @@ class Parser:
     # PRODUCCIÓN: <login> → "login" <identificador> <password>
     # -------------------------------------------------------------------------
     # Ejemplo válido: "login juan password123"
-    # <password> → <identificador>, por eso se consume con 'ID' también.
+    # CORRECCIÓN: la contraseña se consume con parse_password() en lugar de
+    # consume('ID') directamente, para aceptar caracteres especiales (@#$!)
+    # que el lexer ahora permite en contraseñas (ej: P@ss_1, Adm!n#2026).
     def parse_login(self):
         self.consume('LOGIN')
         usuario = self.consume('ID')
-        password = self.consume('ID')
-        return Node('login', usuario=usuario.value, password=password.value)
+        password = self.parse_password()  # CORRECCIÓN: era consume('ID')
+        return Node('login', usuario=usuario.value, password=password)
 
     # -------------------------------------------------------------------------
     # PRODUCCIÓN: <logout> → "logout" <identificador>
@@ -256,14 +258,16 @@ class Parser:
     # -------------------------------------------------------------------------
     # PRODUCCIÓN: <accion> → "leer" | "escribir" | "eliminar" | "acceder"
     # -------------------------------------------------------------------------
-    # Define qué operación se permite o deniega sobre el recurso.
-    # Se usa un diccionario para mapear el tipo del token a su valor en texto.
+    # CORRECCIÓN: el parser original buscaba tipos de token LEER, ESCRIBIR, etc.,
+    # que nunca existen porque el lexer los emite como ID. Ahora se consume un
+    # token ID y se valida su valor contra el conjunto de acciones permitidas.
+    # Esto también facilita agregar nuevas acciones sin tocar la gramática.
     def parse_accion(self):
         tok = self.current()
-        opciones = {'LEER': 'leer', 'ESCRIBIR': 'escribir', 'ELIMINAR': 'eliminar', 'ACCEDER': 'acceder'}
-        if tok and tok.type in opciones:
+        acciones = {'leer', 'escribir', 'eliminar', 'acceder', 'ejecutar'}  # CORRECCIÓN: antes era un dict de tipos de token
+        if tok and tok.type == 'ID' and tok.value in acciones:
             self.pos += 1
-            return opciones[tok.type]
+            return tok.value
         val = tok.value if tok else 'fin de entrada'
         linea = tok.lineno if tok else '?'
         raise SyntaxError(
@@ -273,23 +277,41 @@ class Parser:
     # -------------------------------------------------------------------------
     # PRODUCCIÓN: <recurso> → "dashboard" | "usuarios" | "reportes" | "configuracion"
     # -------------------------------------------------------------------------
-    # Los recursos son los elementos del sistema sobre los que se aplican permisos.
+    # CORRECCIÓN: misma situación que parse_accion(). El lexer emite estos valores
+    # como ID, no como tipos de token propios. Se corrige validando el valor del
+    # token ID contra el conjunto de recursos permitidos.
     def parse_recurso(self):
         tok = self.current()
-        opciones = {
-            'DASHBOARD':     'dashboard',
-            'USUARIOS':      'usuarios',
-            'REPORTES':      'reportes',
-            'CONFIGURACION': 'configuracion',
-        }
-        if tok and tok.type in opciones:
+        recursos = {'dashboard', 'usuarios', 'reportes', 'configuracion', 'pipeline', 'archivos'}  # CORRECCIÓN: antes era un dict de tipos de token
+        if tok and tok.type == 'ID' and tok.value in recursos:
             self.pos += 1
-            return opciones[tok.type]
+            return tok.value
         val = tok.value if tok else 'fin de entrada'
         linea = tok.lineno if tok else '?'
         raise SyntaxError(
             f"Línea {linea}: se esperaba un recurso (dashboard/usuarios/reportes/configuracion), se obtuvo '{val}'"
         )
+
+    # -------------------------------------------------------------------------
+    # PRODUCCIÓN: <password> → <identificador>
+    # -------------------------------------------------------------------------
+    # CORRECCIÓN (función nueva): separada de consume('ID') para reflejar que
+    # <password> acepta el conjunto ampliado del lexer, que incluye caracteres
+    # especiales como @, #, $, ! válidos en contraseñas pero no en nombres de
+    # usuario o rol. Solo se verifica que el token exista y sea de tipo ID.
+    def parse_password(self):
+        tok = self.current()
+        if tok is None:
+            raise SyntaxError(
+                "Se esperaba una contraseña pero se llegó al fin de la entrada"
+            )
+        if tok.type != 'ID':
+            raise SyntaxError(
+                f"Línea {tok.lineno}: se esperaba una contraseña, "
+                f"se obtuvo '{tok.type}' ('{tok.value}')"
+            )
+        self.pos += 1
+        return tok.value
 
 
 # =============================================================================
@@ -328,6 +350,8 @@ if __name__ == '__main__':
             "login juan password123\n"
             "permitir admin acceder dashboard"
         ),
+        "login juan P@ss_1",        # CORRECCIÓN: contraseña con caracteres especiales
+        "login juan Adm!n#2026",    # CORRECCIÓN: ídem
     ]
 
     casos_invalidos = [
