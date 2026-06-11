@@ -176,8 +176,8 @@ class Parser:
     # -------------------------------------------------------------------------
     # Ejemplo válido: "login juan password123"
     # CORRECCIÓN: la contraseña se consume con parse_password() en lugar de
-    # consume('ID') directamente, para aceptar caracteres especiales (@#$!)
-    # que el lexer ahora permite en contraseñas (ej: P@ss_1, Adm!n#2026).
+    # consume('ID') directamente, para aceptar contraseñas con caracteres especiales (@#$!)
+    # que el lexer ahora permite (ej: P@ss_1, Adm!n#2026).
     def parse_login(self):
         self.consume('LOGIN')
         usuario = self.consume('ID')
