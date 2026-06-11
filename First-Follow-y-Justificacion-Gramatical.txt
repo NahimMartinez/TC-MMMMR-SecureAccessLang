@@ -6,7 +6,7 @@
 
 Justificación Gramatical y utilización de Gramática tipo LL(1):
 
-Nuestro parser es de tipo LL(1): lee la entrada de izquierda a derecha
+Nuestro Analizador Sintáctico es de tipo Parser LL(1): lee la entrada de izquierda a derecha
 y decide qué regla aplicar mirando UN solo token a la vez, sin volver
 atrás. Para demostrar que esto es posible sin ambigüedad, calculamos
 dos conjuntos para cada regla de la gramática:
@@ -19,6 +19,9 @@ alternativa, los FIRST de esas alternativas no se superponen.
 Si alguna alternativa puede ser vacía (ε), además su FIRST no debe
 superponerse con su FOLLOW.
 
+Nota Aclaración: La tabla predictiva la añadimos al repositorio
+ en formato excel, ya que por su tamaño no era posible agregarla 
+ en este archivo y que sea fácil de leer.
 
 CONJUNTOS FIRST
 ───────────────

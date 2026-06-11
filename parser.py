@@ -6,9 +6,12 @@ from lexer import lexer
 # El parser es la segunda etapa del análisis. Recibe la lista de tokens que
 # produjo el lexer y verifica que estén en el orden correcto según la gramática.
 #
-# Se usa la técnica de PARSER DESCENDENTE RECURSIVO: cada producción de la
-# gramática BNF se convierte directamente en una función de Python.
-#
+# Se implementa un ANALIZADOR PARSER LL(1): lee la entrada de izquierda a derecha
+# y decide qué producción aplicar mirando un solo token de lookahead, sin
+# retroceder. Esto es posible porque los conjuntos FIRST de cada alternativa
+# son disjuntos, garantizando una única decisión posible en cada paso.
+#La justificación de la elección y los conjuntos First-Follow se encuentran adjuntos en "First-Follow-y-Justificacion-Gramatical.txt"
+
 # Si la entrada es válida, construye un AST (Árbol Sintáctico Abstracto)
 # que representa la estructura jerárquica del programa.
 # Si la entrada es inválida, lanza un SyntaxError con el número de línea.
