@@ -6,18 +6,25 @@ from lexer import lexer
 # El parser es la segunda etapa del análisis. Recibe la lista de tokens que
 # produjo el lexer y verifica que estén en el orden correcto según la gramática.
 #
-# Se implementa un ANALIZADOR PARSER LL(1): lee la entrada de izquierda a derecha
-# y decide qué producción aplicar mirando un solo token de lookahead, sin
-# retroceder. Esto es posible porque los conjuntos FIRST de cada alternativa
-# son disjuntos, garantizando una única decisión posible en cada paso.
-#La justificación de la elección y los conjuntos First-Follow se encuentran adjuntos en "First-Follow-y-Justificacion-Gramatical.txt"
-
+# Se implementa un ANALIZADOR DESCENDENTE RECURSIVO LL(1): lee la entrada de
+# izquierda a derecha y decide qué producción aplicar mirando un solo token de
+# lookahead (el token actual), sin retroceder nunca.
+#
+# LL(1) significa:
+#   - L: Left-to-right (lectura de izquierda a derecha)
+#   - L: Leftmost derivation (derivación por la izquierda)
+#   - (1): un solo token de lookahead para decidir
+#
+# Esto es posible porque los conjuntos FIRST de cada alternativa son disjuntos,
+# garantizando una única decisión posible en cada paso (ver justificación
+# FIRST/FOLLOW en el documento adjunto).
+#
 # Si la entrada es válida, construye un AST (Árbol Sintáctico Abstracto)
 # que representa la estructura jerárquica del programa.
 # Si la entrada es inválida, lanza un SyntaxError con el número de línea.
 #
 # Flujo completo:
-#   Texto → [Lexer] → lista de tokens → [Parser] → AST
+#   Texto -> [Lexer] -> lista de tokens -> [Parser LL(1)] -> AST
 # =============================================================================
 
 
@@ -63,7 +70,7 @@ class Node:
 
 
 # =============================================================================
-# CLASE PARSER — Analizador Sintáctico Descendente Recursivo
+# CLASE PARSER — Analizador Sintáctico Descendente Recursivo LL(1)
 # =============================================================================
 class Parser:
     def __init__(self, tokens):
@@ -73,7 +80,7 @@ class Parser:
         self.pos = 0
 
     def current(self):
-        """Devuelve el token actual sin consumirlo. Retorna None si llegamos al final."""
+        """Devuelve el token actual sin consumirlo (lookahead). Retorna None al final."""
         if self.pos < len(self.tokens):
             return self.tokens[self.pos]
         return None
@@ -81,7 +88,7 @@ class Parser:
     def consume(self, expected_type):
         """
         Verifica que el token actual sea del tipo esperado y avanza al siguiente.
-        Es el mecanismo central del parser: cada llamada a consume() "acepta"
+        Es el mecanismo central del parser LL(1): cada llamada a consume() acepta
         un terminal de la gramática.
 
         Si el token no coincide con lo esperado, lanza SyntaxError indicando
@@ -99,11 +106,14 @@ class Parser:
         return tok
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <programa> → <lista_sentencias>
+    # PRODUCCIÓN: <programa> -> <lista_sentencias>
     # -------------------------------------------------------------------------
     # Punto de entrada del parser. Analiza el programa completo.
     # Al final verifica que no haya tokens sobrantes (si los hay, la entrada
     # tiene algo extra que la gramática no contempla).
+    #
+    # FIRST(<programa>) = FIRST(<lista_sentencias>)
+    #                   = { rol, usuario, login, logout, mfa, permitir, denegar }
     def parse_programa(self):
         sentencias = self.parse_lista_sentencias()
         if self.current() is not None:
@@ -112,24 +122,28 @@ class Parser:
         return Node('programa', sentencias=sentencias)
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <lista_sentencias> → <sentencia> | <sentencia> <lista_sentencias>
+    # PRODUCCIÓN: <lista_sentencias> -> <sentencia> | <sentencia> <lista_sentencias>
     # -------------------------------------------------------------------------
     # Analiza una o más sentencias seguidas. El bucle while continúa mientras
-    # haya tokens disponibles, acumulando cada sentencia en la lista.
+    # haya tokens de inicio de sentencia disponibles.
+    #
+    # FIRST(<lista_sentencias>) = { rol, usuario, login, logout, mfa, permitir, denegar }
+    # FOLLOW(<lista_sentencias>) = { $ }
     def parse_lista_sentencias(self):
         sentencias = []
-        while self.current() is not None:
+        inicio_sentencia = {'ROL', 'USUARIO', 'LOGIN', 'LOGOUT', 'MFA', 'PERMITIR', 'DENEGAR'}
+        while self.current() is not None and self.current().type in inicio_sentencia:
             sentencias.append(self.parse_sentencia())
         return sentencias
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <sentencia> → <def_rol> | <def_usuario> | <login> |
-    #                           <logout> | <mfa> | <permiso>
+    # PRODUCCIÓN: <sentencia> -> <def_rol> | <def_usuario> | <login> |
+    #                            <logout> | <mfa> | <permiso>
     # -------------------------------------------------------------------------
-    # Mira el token actual (sin consumirlo) para decidir qué tipo de sentencia
-    # viene. Esto es posible porque cada sentencia empieza con una palabra
-    # reservada diferente — la gramática es LL(1): con mirar 1 token alcanza
-    # para saber qué producción aplicar.
+    # Mira el token actual (lookahead) para decidir qué producción aplicar.
+    # Cada alternativa comienza con un terminal distinto: sin conflicto LL(1).
+    #
+    # FIRST(<sentencia>) = { rol, usuario, login, logout, mfa, permitir, denegar }
     def parse_sentencia(self):
         tok = self.current()
         if tok is None:
@@ -153,20 +167,24 @@ class Parser:
             )
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <def_rol> → "rol" <identificador>
+    # PRODUCCIÓN: <def_rol> -> "rol" <identificador>
     # -------------------------------------------------------------------------
     # Ejemplo válido: "rol admin"
-    # Consume la palabra "rol" y luego espera un identificador (el nombre del rol).
+    # Consume el terminal "rol" y luego un ID (el nombre del rol).
+    #
+    # FIRST(<def_rol>) = { rol }
     def parse_def_rol(self):
         self.consume('ROL')
         nombre = self.consume('ID')
         return Node('def_rol', nombre=nombre.value)
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <def_usuario> → "usuario" <identificador> "asignar" <identificador>
+    # PRODUCCIÓN: <def_usuario> -> "usuario" <identificador> "asignar" <identificador>
     # -------------------------------------------------------------------------
     # Ejemplo válido: "usuario juan asignar admin"
-    # El primer ID es el nombre del usuario, el segundo es el rol que se le asigna.
+    # El primer ID es el nombre del usuario, el segundo es el rol asignado.
+    #
+    # FIRST(<def_usuario>) = { usuario }
     def parse_def_usuario(self):
         self.consume('USUARIO')
         nombre = self.consume('ID')
@@ -175,33 +193,36 @@ class Parser:
         return Node('def_usuario', nombre=nombre.value, rol=rol.value)
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <login> → "login" <identificador> <password>
+    # PRODUCCIÓN: <login> -> "login" <identificador> <password>
     # -------------------------------------------------------------------------
     # Ejemplo válido: "login juan password123"
-    # CORRECCIÓN: la contraseña se consume con parse_password() en lugar de
-    # consume('ID') directamente, para aceptar contraseñas con caracteres especiales (@#$!)
-    # que el lexer ahora permite (ej: P@ss_1, Adm!n#2026).
+    # La contraseña se consume con parse_password() para reflejar que
+    # <password> es un no-terminal distinto en la gramática.
+    #
+    # FIRST(<login>) = { login }
     def parse_login(self):
         self.consume('LOGIN')
         usuario = self.consume('ID')
-        password = self.parse_password()  # CORRECCIÓN: era consume('ID')
+        password = self.parse_password()
         return Node('login', usuario=usuario.value, password=password)
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <logout> → "logout" <identificador>
+    # PRODUCCIÓN: <logout> -> "logout" <identificador>
     # -------------------------------------------------------------------------
     # Ejemplo válido: "logout juan"
+    #
+    # FIRST(<logout>) = { logout }
     def parse_logout(self):
         self.consume('LOGOUT')
         usuario = self.consume('ID')
         return Node('logout', usuario=usuario.value)
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <mfa> → "mfa" <identificador> <estado_mfa>
+    # PRODUCCIÓN: <mfa> -> "mfa" <identificador> <estado_mfa>
     # -------------------------------------------------------------------------
     # Ejemplo válido: "mfa juan activar"
-    # El estado_mfa es un no-terminal con sus propias opciones, se delega a
-    # parse_estado_mfa().
+    #
+    # FIRST(<mfa>) = { mfa }
     def parse_mfa(self):
         self.consume('MFA')
         usuario = self.consume('ID')
@@ -209,9 +230,11 @@ class Parser:
         return Node('mfa', usuario=usuario.value, estado=estado)
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <estado_mfa> → "activar" | "desactivar"
+    # PRODUCCIÓN: <estado_mfa> -> "activar" | "desactivar"
     # -------------------------------------------------------------------------
-    # Solo acepta exactamente esas dos palabras. Cualquier otra cosa es error.
+    # FIRST(<estado_mfa>) = { activar, desactivar } -> sin conflicto LL(1).
+    # FOLLOW(<estado_mfa>) = FOLLOW(<mfa>) = { rol, usuario, login, logout,
+    #                                          mfa, permitir, denegar, $ }
     def parse_estado_mfa(self):
         tok = self.current()
         if tok and tok.type == 'ACTIVAR':
@@ -228,10 +251,11 @@ class Parser:
             )
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <permiso> → <efecto> <identificador> <accion> <recurso>
+    # PRODUCCIÓN: <permiso> -> <efecto> <identificador> <accion> <recurso>
     # -------------------------------------------------------------------------
     # Ejemplo válido: "permitir admin acceder dashboard"
-    # Cada parte es un no-terminal distinto, se delega a sus funciones.
+    #
+    # FIRST(<permiso>) = FIRST(<efecto>) = { permitir, denegar }
     def parse_permiso(self):
         efecto = self.parse_efecto()
         rol = self.consume('ID')
@@ -240,9 +264,10 @@ class Parser:
         return Node('permiso', efecto=efecto, rol=rol.value, accion=accion, recurso=recurso)
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <efecto> → "permitir" | "denegar"
+    # PRODUCCIÓN: <efecto> -> "permitir" | "denegar"
     # -------------------------------------------------------------------------
-    # Indica si el permiso concede o niega el acceso.
+    # FIRST(<efecto>) = { permitir, denegar } -> sin conflicto LL(1).
+    # FOLLOW(<efecto>) = FIRST(<identificador>) = { ID }
     def parse_efecto(self):
         tok = self.current()
         if tok and tok.type == 'PERMITIR':
@@ -259,55 +284,63 @@ class Parser:
             )
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <accion> → "leer" | "escribir" | "eliminar" | "acceder"
+    # PRODUCCIÓN: <accion> -> <identificador>
     # -------------------------------------------------------------------------
-    # CORRECCIÓN: el parser original buscaba tipos de token LEER, ESCRIBIR, etc.,
-    # que nunca existen porque el lexer los emite como ID. Ahora se consume un
-    # token ID y se valida su valor contra el conjunto de acciones permitidas.
-    # Esto también facilita agregar nuevas acciones sin tocar la gramática.
+    # CORRECCIÓN: antes validaba el valor contra un conjunto fijo {'leer', 'escribir'...}
+    # lo que limitaba la extensibilidad (observación del docente).
+    # Ahora acepta cualquier ID, igual que <identificador>.
+    # La restricción de qué acciones son válidas es responsabilidad semántica,
+    # no gramatical: la gramática solo verifica estructura.
+    #
+    # FIRST(<accion>) = FIRST(<identificador>) = { ID }
+    # FOLLOW(<accion>) = FIRST(<recurso>) = { ID }
     def parse_accion(self):
         tok = self.current()
-        acciones = {'leer', 'escribir', 'eliminar', 'acceder', 'ejecutar'}  # CORRECCIÓN: antes era un dict de tipos de token
-        if tok and tok.type == 'ID' and tok.value in acciones:
-            self.pos += 1
-            return tok.value
-        val = tok.value if tok else 'fin de entrada'
-        linea = tok.lineno if tok else '?'
-        raise SyntaxError(
-            f"Línea {linea}: se esperaba una acción (leer/escribir/eliminar/acceder), se obtuvo '{val}'"
-        )
+        if tok is None:
+            raise SyntaxError("Se esperaba una acción pero se llegó al fin de la entrada")
+        if tok.type != 'ID':
+            raise SyntaxError(
+                f"Línea {tok.lineno}: se esperaba una acción (identificador), "
+                f"se obtuvo '{tok.type}' ('{tok.value}')"
+            )
+        self.pos += 1
+        return tok.value
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <recurso> → "dashboard" | "usuarios" | "reportes" | "configuracion"
+    # PRODUCCIÓN: <recurso> -> <identificador>
     # -------------------------------------------------------------------------
-    # CORRECCIÓN: misma situación que parse_accion(). El lexer emite estos valores
-    # como ID, no como tipos de token propios. Se corrige validando el valor del
-    # token ID contra el conjunto de recursos permitidos.
+    # CORRECCIÓN: misma situación que parse_accion(). Antes validaba contra
+    # {'dashboard', 'usuarios'...}, limitando la extensibilidad.
+    # Ahora acepta cualquier ID.
+    #
+    # FIRST(<recurso>) = FIRST(<identificador>) = { ID }
+    # FOLLOW(<recurso>) = FOLLOW(<permiso>) = { rol, usuario, login, logout,
+    #                                           mfa, permitir, denegar, $ }
     def parse_recurso(self):
         tok = self.current()
-        recursos = {'dashboard', 'usuarios', 'reportes', 'configuracion', 'pipeline', 'archivos'}  # CORRECCIÓN: antes era un dict de tipos de token
-        if tok and tok.type == 'ID' and tok.value in recursos:
-            self.pos += 1
-            return tok.value
-        val = tok.value if tok else 'fin de entrada'
-        linea = tok.lineno if tok else '?'
-        raise SyntaxError(
-            f"Línea {linea}: se esperaba un recurso (dashboard/usuarios/reportes/configuracion), se obtuvo '{val}'"
-        )
+        if tok is None:
+            raise SyntaxError("Se esperaba un recurso pero se llegó al fin de la entrada")
+        if tok.type != 'ID':
+            raise SyntaxError(
+                f"Línea {tok.lineno}: se esperaba un recurso (identificador), "
+                f"se obtuvo '{tok.type}' ('{tok.value}')"
+            )
+        self.pos += 1
+        return tok.value
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <password> → <identificador>
+    # PRODUCCIÓN: <password> -> <identificador>
     # -------------------------------------------------------------------------
-    # CORRECCIÓN (función nueva): separada de consume('ID') para reflejar que
-    # <password> acepta el conjunto ampliado del lexer, que incluye caracteres
-    # especiales como @, #, $, ! válidos en contraseñas pero no en nombres de
-    # usuario o rol. Solo se verifica que el token exista y sea de tipo ID.
+    # Acepta cualquier token ID como contraseña. El lexer amplió el regex
+    # para incluir caracteres especiales (@, #, $, !) válidos en contraseñas.
+    #
+    # FIRST(<password>) = FIRST(<identificador>) = { ID }
+    # FOLLOW(<password>) = FOLLOW(<login>) = { rol, usuario, login, logout,
+    #                                          mfa, permitir, denegar, $ }
     def parse_password(self):
         tok = self.current()
         if tok is None:
-            raise SyntaxError(
-                "Se esperaba una contraseña pero se llegó al fin de la entrada"
-            )
+            raise SyntaxError("Se esperaba una contraseña pero se llegó al fin de la entrada")
         if tok.type != 'ID':
             raise SyntaxError(
                 f"Línea {tok.lineno}: se esperaba una contraseña, "
@@ -346,6 +379,10 @@ if __name__ == '__main__':
         "permitir admin acceder dashboard",
         "denegar invitado eliminar usuarios",
         "permitir editor escribir reportes",
+        "login juan P@ss_1",
+        "login juan Adm!n#2026",
+        "permitir dev ejecutar pipeline",
+        "permitir editor escribir archivos",
         # Programa con múltiples sentencias (saltos de línea como separadores)
         (
             "rol admin\n"
@@ -353,20 +390,22 @@ if __name__ == '__main__':
             "login juan password123\n"
             "permitir admin acceder dashboard"
         ),
-        "login juan P@ss_1",        # CORRECCIÓN: contraseña con caracteres especiales
-        "login juan Adm!n#2026",    # CORRECCIÓN: ídem
     ]
 
+    # Con <accion> y <recurso> como <identificador> extensible, ya no se
+    # rechazan valores semánticamente desconocidos a nivel gramatical.
+    # Los errores detectables son los estructurales (tokens faltantes o
+    # palabras reservadas en lugar de identificadores).
     casos_invalidos = [
-        ("usuario asignar admin",          "falta nombre de usuario"),
-        ("mfa juan volar",                 "estado_mfa inválido"),
-        ("login juan",                     "falta password"),
-        ("permitir admin borrar usuarios", "acción inexistente"),
-        ("denegar invitado eliminar red",  "recurso inexistente"),
+        ("usuario asignar admin",   "falta nombre de usuario"),
+        ("mfa juan volar",          "estado_mfa invalido: 'volar' no es activar/desactivar"),
+        ("login juan",              "falta password"),
+        ("permitir admin",          "falta accion y recurso"),
+        ("denegar",                 "falta identificador, accion y recurso"),
     ]
 
     print("=" * 50)
-    print("CASOS VÁLIDOS")
+    print("CASOS VALIDOS")
     print("=" * 50)
     for caso in casos_validos:
         print(f"\nEntrada: {repr(caso)}")
@@ -374,15 +413,15 @@ if __name__ == '__main__':
             ast = parse(caso)
             print(ast)
         except SyntaxError as e:
-            print(f"  ERROR inesperado → {e}")
+            print(f"  ERROR inesperado -> {e}")
 
     print("\n" + "=" * 50)
-    print("CASOS INVÁLIDOS")
+    print("CASOS INVALIDOS")
     print("=" * 50)
     for caso, descripcion in casos_invalidos:
         print(f"\nEntrada: {repr(caso)}  ({descripcion})")
         try:
             ast = parse(caso)
-            print(f"  ERROR: debería fallar pero produjo → {ast}")
+            print(f"  ERROR: deberia fallar pero produjo -> {ast}")
         except SyntaxError as e:
-            print(f"  Detectado correctamente → {e}")
+            print(f"  Detectado correctamente -> {e}")
