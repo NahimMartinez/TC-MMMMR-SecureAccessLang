@@ -154,9 +154,10 @@ class Parser:
     # -------------------------------------------------------------------------
     # PRODUCCIÓN: <lista_sentencias> -> <sentencia> | <sentencia> <lista_sentencias>
     # -------------------------------------------------------------------------
-    # Analiza una o más sentencias seguidas. El bucle while continúa mientras
-    # haya tokens de inicio de sentencia disponibles, O mientras el parser
-    # esté en modo pánico tratando de resincronizar tras un error.
+    # Analiza una o más sentencias seguidas. El bucle while implementa la
+    # recursión a derecha de la gramática de forma iterativa (equivalente
+    # formal, sin riesgo de desbordamiento de pila en programas largos).
+    # Continúa mientras haya tokens de inicio de sentencia disponibles.
     #
     # RECUPERACIÓN (modo pánico):
     #   1. Si parse_sentencia() lanza SyntaxError, se captura aquí mismo.
@@ -227,7 +228,7 @@ class Parser:
             )
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <def_rol> -> "rol" <identificador>
+    # PRODUCCIÓN: <def_rol> -> "rol" ID
     # -------------------------------------------------------------------------
     # Ejemplo válido: "rol admin"
     # Consume el terminal "rol" y luego un ID (el nombre del rol).
@@ -239,7 +240,7 @@ class Parser:
         return Node('def_rol', nombre=nombre.value)
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <def_usuario> -> "usuario" <identificador> "asignar" <identificador>
+    # PRODUCCIÓN: <def_usuario> -> "usuario" ID "asignar" ID
     # -------------------------------------------------------------------------
     # Ejemplo válido: "usuario juan asignar admin"
     # El primer ID es el nombre del usuario, el segundo es el rol asignado.
@@ -253,7 +254,7 @@ class Parser:
         return Node('def_usuario', nombre=nombre.value, rol=rol.value)
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <login> -> "login" <identificador> <password>
+    # PRODUCCIÓN: <login> -> "login" ID <password>
     # -------------------------------------------------------------------------
     # Ejemplo válido: "login juan password123"
     # La contraseña se consume con parse_password() para reflejar que
@@ -267,7 +268,7 @@ class Parser:
         return Node('login', usuario=usuario.value, password=password)
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <logout> -> "logout" <identificador>
+    # PRODUCCIÓN: <logout> -> "logout" ID
     # -------------------------------------------------------------------------
     # Ejemplo válido: "logout juan"
     #
@@ -278,7 +279,7 @@ class Parser:
         return Node('logout', usuario=usuario.value)
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <mfa> -> "mfa" <identificador> <estado_mfa>
+    # PRODUCCIÓN: <mfa> -> "mfa" ID <estado_mfa>
     # -------------------------------------------------------------------------
     # Ejemplo válido: "mfa juan activar"
     #
@@ -311,7 +312,7 @@ class Parser:
             )
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <permiso> -> <efecto> <identificador> <accion> <recurso>
+    # PRODUCCIÓN: <permiso> -> <efecto> ID <accion> <recurso>
     # -------------------------------------------------------------------------
     # Ejemplo válido: "permitir admin acceder dashboard"
     #
@@ -327,7 +328,7 @@ class Parser:
     # PRODUCCIÓN: <efecto> -> "permitir" | "denegar"
     # -------------------------------------------------------------------------
     # FIRST(<efecto>) = { permitir, denegar } -> sin conflicto LL(1).
-    # FOLLOW(<efecto>) = FIRST(<identificador>) = { ID }
+    # FOLLOW(<efecto>) = { ID }
     def parse_efecto(self):
         tok = self.current()
         if tok and tok.type == 'PERMITIR':
@@ -344,16 +345,14 @@ class Parser:
             )
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <accion> -> <identificador>
+    # PRODUCCIÓN: <accion> -> ID
     # -------------------------------------------------------------------------
-    # CORRECCIÓN: antes validaba el valor contra un conjunto fijo {'leer', 'escribir'...}
-    # lo que limitaba la extensibilidad (observación del docente).
-    # Ahora acepta cualquier ID, igual que <identificador>.
-    # La restricción de qué acciones son válidas es responsabilidad semántica,
-    # no gramatical: la gramática solo verifica estructura.
+    # Acepta cualquier ID como acción. La restricción de qué acciones son
+    # válidas es responsabilidad semántica, no gramatical: la gramática solo
+    # verifica estructura.
     #
-    # FIRST(<accion>) = FIRST(<identificador>) = { ID }
-    # FOLLOW(<accion>) = FIRST(<recurso>) = { ID }
+    # FIRST(<accion>) = { ID }
+    # FOLLOW(<accion>) = { ID }
     def parse_accion(self):
         tok = self.current()
         if tok is None:
@@ -367,13 +366,13 @@ class Parser:
         return tok.value
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <recurso> -> <identificador>
+    # PRODUCCIÓN: <recurso> -> ID
     # -------------------------------------------------------------------------
-    # CORRECCIÓN: misma situación que parse_accion(). Antes validaba contra
-    # {'dashboard', 'usuarios'...}, limitando la extensibilidad.
-    # Ahora acepta cualquier ID.
+    # Acepta cualquier ID como recurso. La restricción de qué recursos son
+    # válidos es responsabilidad semántica, no gramatical: la gramática solo
+    # verifica estructura.
     #
-    # FIRST(<recurso>) = FIRST(<identificador>) = { ID }
+    # FIRST(<recurso>) = { ID }
     # FOLLOW(<recurso>) = FOLLOW(<permiso>) = { rol, usuario, login, logout,
     #                                           mfa, permitir, denegar, $ }
     def parse_recurso(self):
@@ -389,12 +388,12 @@ class Parser:
         return tok.value
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <password> -> <identificador>
+    # PRODUCCIÓN: <password> -> ID
     # -------------------------------------------------------------------------
     # Acepta cualquier token ID como contraseña. El lexer amplió el regex
     # para incluir caracteres especiales (@, #, $, !) válidos en contraseñas.
     #
-    # FIRST(<password>) = FIRST(<identificador>) = { ID }
+    # FIRST(<password>) = { ID }
     # FOLLOW(<password>) = FOLLOW(<login>) = { rol, usuario, login, logout,
     #                                          mfa, permitir, denegar, $ }
     def parse_password(self):

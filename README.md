@@ -471,7 +471,29 @@ Estos mensajes permiten identificar con precisión la causa del error y el punto
 
 # Gramática
 
-La definición formal de la gramática, el cálculo de los conjuntos FIRST y FOLLOW y la demostración de que la gramática pertenece a la clase LL(1) se encuentran documentados en el informe técnico entregado junto al proyecto.
+La gramática consta de veintidós producciones. El terminal `ID` es reconocido directamente por el lexer mediante la expresión regular `[A-Za-z0-9_@#$!]+`; la gramática formal lo trata como un terminal atómico, delegando su estructura interna al análisis léxico.
+
+```text
+<programa>    ::= <lista_sentencias>
+<lista_sent.> ::= <sentencia>
+                | <sentencia> <lista_sent.>
+<sentencia>   ::= <def_rol> | <def_usuario>
+                | <login>   | <logout>
+                | <mfa>     | <permiso>
+<def_rol>     ::= "rol" ID
+<def_usuario> ::= "usuario" ID "asignar" ID
+<login>       ::= "login" ID <password>
+<logout>      ::= "logout" ID
+<mfa>         ::= "mfa" ID <estado_mfa>
+<estado_mfa>  ::= "activar" | "desactivar"
+<permiso>     ::= <efecto> ID <accion> <recurso>
+<efecto>      ::= "permitir" | "denegar"
+<accion>      ::= ID
+<recurso>     ::= ID
+<password>    ::= ID
+```
+
+La demostración formal de que la gramática pertenece a la clase LL(1) —incluyendo el cálculo de los conjuntos FIRST y FOLLOW y la verificación de ausencia de conflictos— se encuentra documentada en el informe técnico entregado junto al proyecto.
 
 El parser implementa un analizador descendente recursivo LL(1), tomando decisiones mediante un único token de lookahead y sin necesidad de retroceso (backtracking).
 
