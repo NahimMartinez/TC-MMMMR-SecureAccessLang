@@ -30,8 +30,8 @@ Licenciatura en Sistemas de Información
 Descripción de los archivos:
 
 - **lexer.py**: analizador léxico implementado con PLY.
-- **parser.py**: analizador sintáctico descendente recursivo LL(1) y construcción del AST.
-- **casos_prueba.txt**: conjunto de casos válidos e inválidos.
+- **parser.py**: analizador sintáctico descendente recursivo LL(1), construcción del AST y recuperación de errores en modo pánico.
+- **casos_prueba.txt**: conjunto de casos válidos, inválidos y parciales.
 - **test_runner.py**: ejecución automática de la batería de pruebas.
 - **README.md**: documentación del proyecto.
 
@@ -105,6 +105,41 @@ La construcción del AST demuestra que el parser no solo verifica si una cadena 
 
 ---
 
+## 4. Recuperación de errores en modo pánico
+
+Cuando una entrada contiene múltiples sentencias y una de ellas es inválida, el parser no se detiene: reporta el error con su número de línea, descarta tokens hasta encontrar el inicio de la próxima sentencia válida y continúa el análisis.
+
+Esto permite que una sola llamada a `parse()` procese un programa completo aunque contenga errores intermedios, construyendo un AST parcial con las sentencias que sí fueron reconocidas correctamente.
+
+Ejemplo:
+
+Entrada:
+
+```text
+rol admin
+usuario asignar admin
+login juan password123
+```
+
+Resultado:
+
+```text
+Error recuperado -> Línea 2: se esperaba 'ID', se obtuvo 'ASIGNAR' ('asignar')
+
+AST parcial:
+programa
+  sentencias:
+    def_rol
+      nombre: admin
+    login
+      usuario: juan
+      password: password123
+```
+
+La sentencia inválida (línea 2) es reportada y descartada; las sentencias válidas (líneas 1 y 3) se reconocen y se incluyen en el AST.
+
+---
+
 # Requisitos
 
 - Python 3.8 o superior
@@ -130,9 +165,9 @@ El runner:
 
 - Lee los casos desde `casos_prueba.txt`.
 - Ejecuta el análisis léxico y sintáctico sobre cada entrada.
-- Verifica si el resultado coincide con el esperado.
-- Genera los árboles sintácticos de los casos válidos.
-- Muestra los errores detectados para los casos inválidos.
+- Verifica si el resultado coincide con el esperado (VALIDO, INVALIDO o PARCIAL).
+- Genera los árboles sintácticos de los casos válidos y parciales.
+- Muestra los errores detectados para los casos inválidos y parciales.
 - Presenta un resumen final de resultados.
 
 Ejemplo de salida:
@@ -142,11 +177,12 @@ Ejemplo de salida:
 EJECUTANDO CASOS DE PRUEBA DESDE: casos_prueba.txt
 ======================================================================
 
-[OK] 'rol admin' esperado=VALIDO obtenido=VALIDO
-[OK] 'usuario juan asignar admin' esperado=VALIDO obtenido=VALIDO
+[OK] 'rol admin'                              esperado=VALIDO    obtenido=VALIDO
+[OK] 'usuario juan asignar admin'             esperado=VALIDO    obtenido=VALIDO
+[OK] 'rol admin\nusuario asignar admin\n...'  esperado=PARCIAL   obtenido=PARCIAL
 
 ======================================================================
-RESUMEN: 19/19 casos correctos
+RESUMEN: 25/25 casos correctos
 ======================================================================
 ```
 
@@ -154,7 +190,7 @@ Luego se muestran dos secciones adicionales:
 
 ```text
 ======================================================================
-ARBOLES GENERADOS (CASOS VALIDOS)
+ARBOLES GENERADOS (CASOS VALIDOS Y PARCIALES)
 ======================================================================
 ```
 
@@ -162,11 +198,11 @@ y
 
 ```text
 ======================================================================
-CASOS INVALIDOS
+CASOS INVALIDOS Y PARCIALES (errores detectados)
 ======================================================================
 ```
 
-donde se presentan los AST generados y los errores sintácticos detectados correctamente.
+donde se presentan los AST generados y los errores sintácticos detectados y recuperados.
 
 También es posible utilizar otro archivo de pruebas:
 
@@ -204,13 +240,13 @@ Esto permite verificar de manera independiente el funcionamiento del lexer.
 python parser.py
 ```
 
-Se ejecutan los casos válidos e inválidos definidos dentro del archivo.
+Se ejecutan los casos válidos, inválidos y de recuperación definidos dentro del archivo.
 
-Para los casos válidos se imprime el AST generado.
+Para los casos válidos se imprime el AST generado.  
+Para los casos inválidos se imprime el error sintáctico detectado.  
+Para los casos de recuperación se imprimen tanto los errores recuperados como el AST parcial.
 
-Para los casos inválidos se imprime el error sintáctico detectado.
-
-Ejemplo:
+Ejemplo (caso válido):
 
 ```text
 ==================================================
@@ -225,7 +261,7 @@ programa
       nombre: admin
 ```
 
-y
+Ejemplo (caso inválido):
 
 ```text
 ==================================================
@@ -238,47 +274,87 @@ Entrada: 'login juan'
   Se esperaba una contraseña pero se llegó al fin de la entrada
 ```
 
+Ejemplo (recuperación de errores):
+
+```text
+==================================================
+CASOS DE RECUPERACION (modo panico, multi-sentencia)
+==================================================
+
+Entrada:
+rol admin
+usuario asignar admin
+login juan password123
+
+Errores detectados y recuperados:
+  - Línea 2: se esperaba 'ID', se obtuvo 'ASIGNAR' ('asignar')
+
+AST parcial (sentencias válidas reconocidas):
+programa
+  sentencias:
+    def_rol
+      nombre: admin
+    login
+      usuario: juan
+      password: password123
+```
+
 ---
 
 ## 4. Utilizar el parser desde código propio
 
-El parser expone una función pública llamada `parse()`.
+El parser expone una función pública llamada `parse()` que siempre retorna una tupla `(ast, errores)`.
 
-Ejemplo:
+Ejemplo (entrada válida):
 
 ```python
 from parser import parse
 
-ast = parse("permitir admin acceder dashboard")
+ast, errores = parse("permitir admin acceder dashboard")
 
 print(ast)
+# programa
+#   sentencias:
+#     permiso
+#       efecto: permitir
+#       rol: admin
+#       accion: acceder
+#       recurso: dashboard
+
+print(errores)  # []
 ```
 
-Salida:
-
-```text
-programa
-  sentencias:
-    permiso
-      efecto: permitir
-      rol: admin
-      accion: acceder
-      recurso: dashboard
-```
-
-Si la entrada es inválida:
+Ejemplo (entrada inválida):
 
 ```python
 from parser import parse
 
-parse("login juan")
+ast, errores = parse("login juan")
+
+print(errores)
+# ['Se esperaba una contraseña pero se llegó al fin de la entrada']
+
+print(ast.attrs['sentencias'])  # [] — ninguna sentencia válida reconocida
 ```
 
-se lanza una excepción:
+Ejemplo (entrada con recuperación parcial):
 
-```text
-SyntaxError:
-Se esperaba una contraseña pero se llegó al fin de la entrada
+```python
+from parser import parse
+
+ast, errores = parse("rol admin\nusuario asignar admin\nlogin juan password123")
+
+print(errores)
+# ["Línea 2: se esperaba 'ID', se obtuvo 'ASIGNAR' ('asignar')"]
+
+print(ast)
+# programa
+#   sentencias:
+#     def_rol
+#       nombre: admin
+#     login
+#       usuario: juan
+#       password: password123
 ```
 
 ---
@@ -294,8 +370,14 @@ entrada | RESULTADO_ESPERADO
 donde:
 
 ```text
-RESULTADO_ESPERADO ∈ { VALIDO, INVALIDO }
+RESULTADO_ESPERADO ∈ { VALIDO, INVALIDO, PARCIAL }
 ```
+
+| Valor | Significado |
+|-------|-------------|
+| `VALIDO` | Toda la entrada se reconoce sin errores. |
+| `INVALIDO` | La entrada tiene error(es) y ninguna sentencia válida pudo reconocerse. |
+| `PARCIAL` | La entrada tiene una o más sentencias con error, pero el parser se recupera y reconoce el resto de las sentencias válidas dentro de esa misma entrada. |
 
 Ejemplos:
 
@@ -305,6 +387,8 @@ rol admin | VALIDO
 usuario asignar admin | INVALIDO
 
 login juan password123 | VALIDO
+
+rol admin\nusuario asignar admin\nlogin juan password123 | PARCIAL
 ```
 
 Las líneas vacías y las que comienzan con `#` se ignoran automáticamente.
@@ -318,6 +402,20 @@ rol admin\nusuario juan asignar admin\nlogin juan password123 | VALIDO
 Durante la ejecución del runner dicha secuencia se convierte automáticamente en saltos de línea reales.
 
 Agregar nuevos casos de prueba solo requiere añadir nuevas líneas a este archivo, sin necesidad de modificar el código fuente.
+
+> **Nota importante sobre PARCIAL:** la recuperación de errores ocurre *dentro* de una misma llamada a `parse()`, no como efecto de llamar al parser línea por línea. Los casos PARCIAL deben integrar varias sentencias en una sola entrada para ejercitar la recuperación real.
+
+---
+
+# Clasificación de resultados
+
+El test runner clasifica cada resultado según la tupla `(ast, errores)` que retorna `parse()`:
+
+| Clasificación | Condición |
+|---------------|-----------|
+| `VALIDO` | `errores` está vacío. |
+| `PARCIAL` | `errores` no está vacío **y** `ast` contiene al menos una sentencia válida. |
+| `INVALIDO` | `errores` no está vacío **y** `ast` no contiene ninguna sentencia válida. |
 
 ---
 
@@ -385,6 +483,7 @@ El parser implementa un analizador descendente recursivo LL(1), tomando decision
 - PLY (Python Lex-Yacc)
 - Analizador Descendente Recursivo LL(1)
 - AST (Abstract Syntax Tree)
+- Recuperación de errores en modo pánico
 
 ---
 
