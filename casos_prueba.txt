@@ -1,0 +1,49 @@
+# =============================================================================
+# CASOS DE PRUEBA — SecureAccessLang
+# =============================================================================
+# Formato: ENTRADA | RESULTADO_ESPERADO
+#   - RESULTADO_ESPERADO es VALIDO o INVALIDO
+#   - Las líneas que empiezan con # son comentarios y se ignoran
+#   - Las líneas vacías se ignoran
+#   - El separador es " | " (espacio, barra, espacio)
+# =============================================================================
+
+# --- Casos válidos: def_rol ---
+rol admin | VALIDO
+rol invitado | VALIDO
+
+# --- Casos válidos: def_usuario ---
+usuario juan asignar admin | VALIDO
+usuario maria asignar editor | VALIDO
+
+# --- Casos válidos: login (incluye casos límite de password) ---
+login juan password123 | VALIDO
+login juan SECRET | VALIDO
+login juan 123456 | VALIDO
+login juan Admin2026 | VALIDO
+login juan P@ss_1 | VALIDO
+login juan Adm!n#2026 | VALIDO
+
+# --- Casos válidos: logout ---
+logout juan | VALIDO
+
+# --- Casos válidos: mfa ---
+mfa juan activar | VALIDO
+mfa root desactivar | VALIDO
+
+# --- Casos válidos: permiso (acción y recurso ahora son genéricos) ---
+permitir admin acceder dashboard | VALIDO
+denegar invitado eliminar usuarios | VALIDO
+permitir editor escribir reportes | VALIDO
+permitir dev ejecutar pipeline | VALIDO
+permitir editor escribir archivos | VALIDO
+
+# --- Caso límite: programa con múltiples sentencias (\n indica salto de línea) ---
+rol admin\nusuario juan asignar admin\nlogin juan password123\npermitir admin acceder dashboard | VALIDO
+
+# --- Casos inválidos: estructurales ---
+usuario asignar admin | INVALIDO
+mfa juan volar | INVALIDO
+login juan | INVALIDO
+permitir admin | INVALIDO
+denegar | INVALIDO
