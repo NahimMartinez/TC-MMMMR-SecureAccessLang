@@ -14,20 +14,51 @@ Uso:
     python test_runner.py
     python test_runner.py otro_archivo_de_casos.txt
 
-Además de verificar si cada caso es válido o inválido, este runner
-genera una sección adicional:
+Además de verificar la clasificación de cada caso, este runner genera dos
+secciones adicionales:
 
-    - Árboles sintácticos (AST) para todos los casos válidos.
-    - Reporte detallado de errores para todos los casos inválidos.
+    - Árboles sintácticos (AST) para todos los casos válidos o parciales.
+    - Reporte detallado de errores para los casos inválidos o parciales.
 
     Esto permite evidenciar que el parser no solo acepta o rechaza entradas,
-    sino que también construye correctamente la representación sintáctica
-    interna de los programas válidos.
+    sino que además construye correctamente la representación sintáctica
+    interna de los programas, incluso cuando se recupera de errores
+    intermedios dentro de una misma entrada.
+
+-----------------------------------------------------------------------------
+SOBRE LA CLASIFICACIÓN VALIDO / INVALIDO / PARCIAL
+-----------------------------------------------------------------------------
+parse() ahora devuelve siempre una tupla (ast, errores), reflejando que el
+parser hace recuperación de errores en modo pánico: una sola entrada puede
+contener varias sentencias, algunas válidas y otras no. Por eso la antigua
+clasificación binaria (VALIDO/INVALIDO, antes determinada por si parse()
+lanzaba o no una excepción) ya no alcanza para describir el resultado.
+Se usan tres categorías:
+
+    VALIDO    -> 0 errores. Todas las sentencias de la entrada son correctas.
+    PARCIAL   -> al menos 1 error, pero también al menos 1 sentencia válida
+                 reconocida. El parser se recuperó y continuó el análisis.
+    INVALIDO  -> al menos 1 error y NINGUNA sentencia válida reconocida.
+                 Equivalente a lo que antes era el único caso de fallo.
+
+IMPORTANTE: esto es distinto de la "recuperación" aparente que se obtenía
+simplemente por el hecho de que este runner llama a parse() una vez por
+cada línea de casos_prueba.txt. Esa repetición de llamadas NO es
+recuperación de errores: cada llamada es independiente y el parser arranca
+de cero. La recuperación real ocurre DENTRO de una misma llamada a parse(),
+cuando una entrada con múltiples sentencias tiene un error en alguna de
+ellas y el parser continúa analizando las siguientes. Por eso
+casos_prueba.txt incluye casos PARCIAL que integran varias sentencias en
+una sola entrada con un error intermedio: solo así se ejercita la
+recuperación real y no el efecto óptico de "una corrida por caso".
 =============================================================================
 """
 
 import sys
 from parser import parse
+
+
+RESULTADOS_VALIDOS = {'VALIDO', 'INVALIDO', 'PARCIAL'}
 
 
 def cargar_casos(ruta):
@@ -63,9 +94,37 @@ def cargar_casos(ruta):
             entrada = entrada.strip().replace('\\n', '\n')
             esperado = esperado.strip().upper()
 
+            if esperado not in RESULTADOS_VALIDOS:
+                print(
+                    f"  [Aviso] Línea {num_linea}: resultado esperado "
+                    f"'{esperado}' no reconocido (use VALIDO, INVALIDO o "
+                    f"PARCIAL). Caso ignorado."
+                )
+                continue
+
             casos.append((entrada, esperado))
 
     return casos
+
+
+def clasificar(ast, errores):
+    """
+    Determina la categoría de un resultado de parse() según la cantidad de
+    errores recuperados y la cantidad de sentencias válidas reconocidas.
+
+        VALIDO   -> sin errores.
+        PARCIAL  -> con errores, pero con al menos una sentencia válida
+                    (el parser se recuperó y reconoció parte del programa).
+        INVALIDO -> con errores y sin ninguna sentencia válida reconocida.
+    """
+    if not errores:
+        return 'VALIDO'
+
+    sentencias_validas = ast.attrs.get('sentencias', [])
+    if sentencias_validas:
+        return 'PARCIAL'
+
+    return 'INVALIDO'
 
 
 def ejecutar_casos(casos):
@@ -78,59 +137,41 @@ def ejecutar_casos(casos):
         aciertos
         fallos
 
-        arboles_validos:
-            lista de tuplas (entrada, ast)
+        resultados_ast:
+            lista de tuplas (entrada, esperado, obtenido, ast, errores)
+            para todos los casos que produjeron al menos una sentencia
+            válida (VALIDO o PARCIAL), para poder mostrar su AST.
 
-        errores_invalidos:
-            lista de tuplas (entrada, mensaje_error)
-
-    Estas dos últimas estructuras permiten generar posteriormente
-    una sección específica con los árboles sintácticos construidos
-    y otra con los errores detectados correctamente.
+        resultados_errores:
+            lista de tuplas (entrada, esperado, obtenido, errores)
+            para todos los casos que produjeron al menos un error
+            (INVALIDO o PARCIAL), para poder mostrar los errores detectados
+            y recuperados.
     """
 
     aciertos = 0
     fallos = []
 
-    # ------------------------------------------------------------------
-    # Casos válidos:
-    # se almacenan para imprimir el AST al final.
-    # ------------------------------------------------------------------
-    arboles_validos = []
-
-    # ------------------------------------------------------------------
-    # Casos inválidos:
-    # se almacena el mensaje de error producido por el parser.
-    # ------------------------------------------------------------------
-    errores_invalidos = []
+    resultados_ast = []
+    resultados_errores = []
 
     for entrada, esperado in casos:
 
-        try:
-            ast = parse(entrada)
+        ast, errores = parse(entrada)
+        obtenido = clasificar(ast, errores)
 
-            obtenido = 'VALIDO'
-            detalle = repr(ast)
+        if obtenido in ('VALIDO', 'PARCIAL'):
+            resultados_ast.append((entrada, esperado, obtenido, ast, errores))
 
-            # Guardar árbol solamente para casos que debían ser válidos
-            if esperado == 'VALIDO':
-                arboles_validos.append((entrada, ast))
-
-        except SyntaxError as e:
-
-            obtenido = 'INVALIDO'
-            detalle = str(e)
-
-            # Guardar error solamente para casos que debían ser inválidos
-            if esperado == 'INVALIDO':
-                errores_invalidos.append((entrada, detalle))
+        if obtenido in ('INVALIDO', 'PARCIAL'):
+            resultados_errores.append((entrada, esperado, obtenido, errores))
 
         if obtenido == esperado:
             aciertos += 1
             estado = 'OK'
         else:
             estado = 'FALLO'
-            fallos.append((entrada, esperado, obtenido, detalle))
+            fallos.append((entrada, esperado, obtenido, repr(ast), errores))
 
         entrada_mostrar = entrada.replace('\n', '\\n')
 
@@ -143,53 +184,66 @@ def ejecutar_casos(casos):
         len(casos),
         aciertos,
         fallos,
-        arboles_validos,
-        errores_invalidos
+        resultados_ast,
+        resultados_errores
     )
 
 
-def imprimir_arboles(arboles_validos):
+def imprimir_arboles(resultados_ast):
     """
-    Muestra todos los árboles sintácticos generados para los casos válidos.
+    Muestra los árboles sintácticos generados para los casos VALIDO y
+    PARCIAL. Para los PARCIAL, el árbol mostrado es el AST parcial: solo
+    contiene las sentencias que el parser logró reconocer tras recuperarse
+    de los errores intermedios.
 
     Esta sección sirve como evidencia de que el parser no solo acepta
     las entradas correctas, sino que además construye correctamente
-    el AST correspondiente.
+    el AST correspondiente, incluso de forma parcial.
     """
 
     print("\n" + "=" * 70)
-    print("ARBOLES GENERADOS (CASOS VALIDOS)")
+    print("ARBOLES GENERADOS (CASOS VALIDOS Y PARCIALES)")
     print("=" * 70)
 
-    for entrada, ast in arboles_validos:
+    for entrada, esperado, obtenido, ast, errores in resultados_ast:
 
         entrada_mostrar = entrada.replace('\n', '\\n')
 
         print(f"\nEntrada: {entrada_mostrar!r}")
+        print(f"Clasificación: {obtenido}")
+
+        if obtenido == 'PARCIAL':
+            print(f"(AST parcial — se omitieron {len(errores)} sentencia(s) con error)")
+
         print()
 
         # El __repr__ del Node ya imprime el árbol con sangría
         print(ast)
 
 
-def imprimir_errores(errores_invalidos):
+def imprimir_errores(resultados_errores):
     """
-    Muestra los errores detectados para los casos inválidos.
+    Muestra los errores detectados (y recuperados, en el caso de PARCIAL)
+    para los casos INVALIDO y PARCIAL.
 
     Esta sección permite demostrar que el parser identifica correctamente
-    las violaciones a la gramática y produce mensajes descriptivos.
+    las violaciones a la gramática, produce mensajes descriptivos con línea,
+    y en los casos PARCIAL continúa el análisis del resto de la entrada en
+    lugar de abortar por completo.
     """
 
     print("\n" + "=" * 70)
-    print("CASOS INVALIDOS")
+    print("CASOS INVALIDOS Y PARCIALES (errores detectados)")
     print("=" * 70)
 
-    for entrada, error in errores_invalidos:
+    for entrada, esperado, obtenido, errores in resultados_errores:
 
         entrada_mostrar = entrada.replace('\n', '\\n')
 
         print(f"\nEntrada: {entrada_mostrar!r}")
-        print(f"  Detectado correctamente -> {error}")
+        print(f"Clasificación: {obtenido}")
+        for error in errores:
+            print(f"  Detectado correctamente -> {error}")
 
 
 def main():
@@ -206,8 +260,8 @@ def main():
         total,
         aciertos,
         fallos,
-        arboles_validos,
-        errores_invalidos
+        resultados_ast,
+        resultados_errores
     ) = ejecutar_casos(casos)
 
     print("\n" + "=" * 70)
@@ -224,27 +278,26 @@ def main():
             f"\n{len(fallos)} caso(s) con resultado distinto al esperado:\n"
         )
 
-        for entrada, esperado, obtenido, detalle in fallos:
+        for entrada, esperado, obtenido, detalle, errores in fallos:
 
             entrada_mostrar = entrada.replace('\n', '\\n')
 
             print(f"  Entrada:  {entrada_mostrar!r}")
             print(f"  Esperado: {esperado}")
             print(f"  Obtenido: {obtenido}")
-            print(f"  Detalle:  {detalle}")
+            print(f"  AST:      {detalle}")
+            print(f"  Errores:  {errores}")
             print()
 
     # ------------------------------------------------------------------
-    # NUEVA SECCIÓN:
-    # Mostrar los árboles sintácticos generados.
+    # Mostrar los árboles sintácticos generados (VALIDO + PARCIAL).
     # ------------------------------------------------------------------
-    imprimir_arboles(arboles_validos)
+    imprimir_arboles(resultados_ast)
 
     # ------------------------------------------------------------------
-    # NUEVA SECCIÓN:
-    # Mostrar los errores detectados para casos inválidos.
+    # Mostrar los errores detectados/recuperados (INVALIDO + PARCIAL).
     # ------------------------------------------------------------------
-    imprimir_errores(errores_invalidos)
+    imprimir_errores(resultados_errores)
 
     # ------------------------------------------------------------------
     # Código de salida:

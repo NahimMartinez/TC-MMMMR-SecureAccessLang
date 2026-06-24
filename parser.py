@@ -21,11 +21,32 @@ from lexer import lexer
 #
 # Si la entrada es válida, construye un AST (Árbol Sintáctico Abstracto)
 # que representa la estructura jerárquica del programa.
-# Si la entrada es inválida, lanza un SyntaxError con el número de línea.
+#
+# MANEJO Y RECUPERACIÓN DE ERRORES (modo pánico)
+# -----------------------------------------------------------------------------
+# A nivel de cada sentencia individual el parser sigue siendo un LL(1) estricto:
+# consume() lanza SyntaxError ante el primer token inesperado, sin backtracking.
+#
+# La RECUPERACIÓN se implementa un nivel arriba, en parse_lista_sentencias():
+# cuando una sentencia falla, el error se captura ahí (no se propaga), se
+# reporta con su línea y mensaje orientado al usuario, y el parser entra en
+# "modo pánico": descarta tokens hasta encontrar el próximo token que
+# pertenezca a FIRST(<sentencia>) (el conjunto de sincronización) o hasta el
+# fin de la entrada, y continúa analizando el resto del programa desde ahí.
+#
+# Esto permite que un solo error en la sentencia N no impida detectar y
+# reportar errores adicionales en las sentencias N+1, N+2, etc., ni impida
+# construir el AST de las sentencias que sí son válidas.
 #
 # Flujo completo:
-#   Texto -> [Lexer] -> lista de tokens -> [Parser LL(1)] -> AST
+#   Texto -> [Lexer] -> lista de tokens -> [Parser LL(1) + modo pánico]
+#         -> (AST parcial, lista de errores)
 # =============================================================================
+
+
+# Conjunto de sincronización para el modo pánico: todo token que puede iniciar
+# una <sentencia> según la gramática. Es exactamente FIRST(<sentencia>).
+INICIO_SENTENCIA = {'ROL', 'USUARIO', 'LOGIN', 'LOGOUT', 'MFA', 'PERMITIR', 'DENEGAR'}
 
 
 # =============================================================================
@@ -71,13 +92,16 @@ class Node:
 
 # =============================================================================
 # CLASE PARSER — Analizador Sintáctico Descendente Recursivo LL(1)
+#               con recuperación de errores en modo pánico
 # =============================================================================
 class Parser:
     def __init__(self, tokens):
         # tokens: lista completa de tokens producida por el lexer
         # pos: índice del token que estamos analizando actualmente
+        # errores: lista de mensajes de error recuperados durante el análisis
         self.tokens = tokens
         self.pos = 0
+        self.errores = []
 
     def current(self):
         """Devuelve el token actual sin consumirlo (lookahead). Retorna None al final."""
@@ -92,7 +116,9 @@ class Parser:
         un terminal de la gramática.
 
         Si el token no coincide con lo esperado, lanza SyntaxError indicando
-        en qué línea ocurrió el error y qué se esperaba vs qué llegó.
+        en qué línea ocurrió el error y qué se esperaba vs qué llegó. Esta
+        excepción es responsabilidad de quien orquesta la sentencia (ver
+        parse_lista_sentencias) capturarla y decidir cómo recuperarse.
         """
         tok = self.current()
         if tok is None:
@@ -109,8 +135,12 @@ class Parser:
     # PRODUCCIÓN: <programa> -> <lista_sentencias>
     # -------------------------------------------------------------------------
     # Punto de entrada del parser. Analiza el programa completo.
-    # Al final verifica que no haya tokens sobrantes (si los hay, la entrada
-    # tiene algo extra que la gramática no contempla).
+    #
+    # Nota sobre recuperación: como parse_lista_sentencias() ya consume tokens
+    # hasta el final en caso de error irrecuperable (no quedan más tokens en
+    # FIRST(<sentencia>)), al volver aquí no deberían quedar tokens sobrantes
+    # en el caso general. Si igualmente quedara alguno (defensivo), se reporta
+    # como error adicional en lugar de abortar todo el análisis.
     #
     # FIRST(<programa>) = FIRST(<lista_sentencias>)
     #                   = { rol, usuario, login, logout, mfa, permitir, denegar }
@@ -118,22 +148,52 @@ class Parser:
         sentencias = self.parse_lista_sentencias()
         if self.current() is not None:
             tok = self.current()
-            raise SyntaxError(f"Línea {tok.lineno}: token inesperado '{tok.value}'")
+            self.errores.append(f"Línea {tok.lineno}: token inesperado '{tok.value}'")
         return Node('programa', sentencias=sentencias)
 
     # -------------------------------------------------------------------------
     # PRODUCCIÓN: <lista_sentencias> -> <sentencia> | <sentencia> <lista_sentencias>
     # -------------------------------------------------------------------------
     # Analiza una o más sentencias seguidas. El bucle while continúa mientras
-    # haya tokens de inicio de sentencia disponibles.
+    # haya tokens de inicio de sentencia disponibles, O mientras el parser
+    # esté en modo pánico tratando de resincronizar tras un error.
+    #
+    # RECUPERACIÓN (modo pánico):
+    #   1. Si parse_sentencia() lanza SyntaxError, se captura aquí mismo.
+    #   2. El mensaje se guarda en self.errores (con línea incluida).
+    #   3. Se descartan tokens uno a uno hasta encontrar el próximo token en
+    #      INICIO_SENTENCIA (conjunto de sincronización) o hasta el fin de
+    #      la entrada.
+    #   4. El análisis continúa normalmente desde el punto de sincronización.
+    #
+    # La sentencia que falló NO se agrega al AST: la lista resultante de
+    # sentencias contiene únicamente las que se reconocieron correctamente.
     #
     # FIRST(<lista_sentencias>) = { rol, usuario, login, logout, mfa, permitir, denegar }
     # FOLLOW(<lista_sentencias>) = { $ }
     def parse_lista_sentencias(self):
         sentencias = []
-        inicio_sentencia = {'ROL', 'USUARIO', 'LOGIN', 'LOGOUT', 'MFA', 'PERMITIR', 'DENEGAR'}
-        while self.current() is not None and self.current().type in inicio_sentencia:
-            sentencias.append(self.parse_sentencia())
+
+        while self.current() is not None and self.current().type in INICIO_SENTENCIA:
+            inicio_pos = self.pos
+            try:
+                sentencias.append(self.parse_sentencia())
+            except SyntaxError as e:
+                self.errores.append(str(e))
+
+                # Modo pánico: si por algún motivo no se avanzó ni un token
+                # (no debería pasar, pero es una salvaguarda contra loops
+                # infinitos), forzamos avanzar al menos uno.
+                if self.pos == inicio_pos:
+                    self.pos += 1
+
+                # Sincronización: descartar tokens hasta el próximo inicio
+                # de sentencia válido o hasta el fin de la entrada.
+                while self.current() is not None and self.current().type not in INICIO_SENTENCIA:
+                    self.pos += 1
+                # El bucle exterior continúa desde aquí, intentando parsear
+                # la siguiente sentencia como si nada hubiera pasado.
+
         return sentencias
 
     # -------------------------------------------------------------------------
@@ -358,11 +418,29 @@ class Parser:
 # Importante: lexer.lineno debe resetearse a 1 antes de cada llamada porque
 # PLY no lo hace automáticamente. Sin este reset, si se parsean múltiples
 # textos seguidos, el número de línea en los errores sería incorrecto.
+#
+# INTERFAZ (cambio respecto a versiones anteriores):
+#   Antes: parse(texto) devolvía el AST, o lanzaba SyntaxError ante el primer
+#          error (abortando todo el análisis).
+#   Ahora: parse(texto) SIEMPRE devuelve una tupla (ast, errores):
+#
+#     - ast: el árbol sintáctico construido con las sentencias reconocidas
+#            correctamente (puede estar incompleto si hubo errores).
+#     - errores: lista de strings con los mensajes de error recuperados,
+#                cada uno con su línea y una descripción orientada al
+#                usuario. Lista vacía si el programa es completamente válido.
+#
+# Esto refleja fielmente la consigna de la cátedra: "reconocer cadenas
+# válidas, detectar errores, continuar el análisis cuando sea posible".
+# El llamador decide qué hacer con (ast, errores) según su propio criterio
+# (ver test_runner.py para la clasificación VALIDO / INVALIDO / PARCIAL).
 def parse(texto):
     lexer.lineno = 1
     lexer.input(texto)
     tok_list = list(lexer)
-    return Parser(tok_list).parse_programa()
+    parser = Parser(tok_list)
+    ast = parser.parse_programa()
+    return ast, parser.errores
 
 
 # =============================================================================
@@ -392,10 +470,9 @@ if __name__ == '__main__':
         ),
     ]
 
-    # Con <accion> y <recurso> como <identificador> extensible, ya no se
-    # rechazan valores semánticamente desconocidos a nivel gramatical.
-    # Los errores detectables son los estructurales (tokens faltantes o
-    # palabras reservadas en lugar de identificadores).
+    # Casos totalmente inválidos: la única sentencia presente falla y no hay
+    # tokens de sincronización después, por lo que el AST resultante queda
+    # vacío (0 sentencias reconocidas) y se reporta 1 error.
     casos_invalidos = [
         ("usuario asignar admin",   "falta nombre de usuario"),
         ("mfa juan volar",          "estado_mfa invalido: 'volar' no es activar/desactivar"),
@@ -404,24 +481,57 @@ if __name__ == '__main__':
         ("denegar",                 "falta identificador, accion y recurso"),
     ]
 
+    # Casos de RECUPERACIÓN: múltiples sentencias en una sola entrada, donde
+    # una o más sentencias intermedias son inválidas pero el resto del
+    # programa sí se reconoce correctamente gracias al modo pánico.
+    casos_recuperacion = [
+        (
+            "rol admin\n"
+            "usuario asignar admin\n"          # sentencia inválida (falta nombre)
+            "login juan password123"
+        ),
+        (
+            "mfa juan volar\n"                 # sentencia inválida (estado_mfa)
+            "rol admin\n"
+            "permitir admin acceder dashboard"
+        ),
+        (
+            "permitir admin acceder dashboard\n"
+            "denegar\n"                        # sentencia inválida (falta todo)
+            "logout juan\n"
+            "mfa juan activar"
+        ),
+    ]
+
     print("=" * 50)
     print("CASOS VALIDOS")
     print("=" * 50)
     for caso in casos_validos:
         print(f"\nEntrada: {repr(caso)}")
-        try:
-            ast = parse(caso)
-            print(ast)
-        except SyntaxError as e:
-            print(f"  ERROR inesperado -> {e}")
+        ast, errores = parse(caso)
+        print(ast)
+        if errores:
+            print(f"  ERROR inesperado, se reportaron errores -> {errores}")
 
     print("\n" + "=" * 50)
     print("CASOS INVALIDOS")
     print("=" * 50)
     for caso, descripcion in casos_invalidos:
         print(f"\nEntrada: {repr(caso)}  ({descripcion})")
-        try:
-            ast = parse(caso)
-            print(f"  ERROR: deberia fallar pero produjo -> {ast}")
-        except SyntaxError as e:
-            print(f"  Detectado correctamente -> {e}")
+        ast, errores = parse(caso)
+        if errores and not ast.attrs['sentencias']:
+            print(f"  Detectado correctamente -> {errores}")
+        else:
+            print(f"  ERROR: deberia fallar por completo pero produjo -> {ast} / errores={errores}")
+
+    print("\n" + "=" * 50)
+    print("CASOS DE RECUPERACION (modo panico, multi-sentencia)")
+    print("=" * 50)
+    for caso in casos_recuperacion:
+        print(f"\nEntrada:\n{caso}")
+        ast, errores = parse(caso)
+        print("\nErrores detectados y recuperados:")
+        for err in errores:
+            print(f"  - {err}")
+        print("\nAST parcial (sentencias válidas reconocidas):")
+        print(ast)

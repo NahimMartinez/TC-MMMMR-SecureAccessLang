@@ -2,10 +2,19 @@
 # CASOS DE PRUEBA — SecureAccessLang
 # =============================================================================
 # Formato: ENTRADA | RESULTADO_ESPERADO
-#   - RESULTADO_ESPERADO es VALIDO o INVALIDO
+#   - RESULTADO_ESPERADO es VALIDO, INVALIDO o PARCIAL
+#       VALIDO   -> toda la entrada se reconoce sin errores.
+#       INVALIDO -> la entrada tiene error(es) y NINGUNA sentencia válida
+#                   pudo reconocerse.
+#       PARCIAL  -> la entrada tiene una o más sentencias con error, pero el
+#                   parser se RECUPERA (modo pánico) y reconoce el resto de
+#                   las sentencias válidas dentro de esa misma entrada.
 #   - Las líneas que empiezan con # son comentarios y se ignoran
 #   - Las líneas vacías se ignoran
 #   - El separador es " | " (espacio, barra, espacio)
+#   - La secuencia literal \n dentro de una entrada representa un salto de
+#     línea real (se decodifica en tiempo de ejecución), para poder escribir
+#     programas de varias sentencias en una sola línea de este archivo.
 # =============================================================================
 
 # --- Casos válidos: def_rol ---
@@ -38,12 +47,27 @@ permitir editor escribir reportes | VALIDO
 permitir dev ejecutar pipeline | VALIDO
 permitir editor escribir archivos | VALIDO
 
-# --- Caso límite: programa con múltiples sentencias (\n indica salto de línea) ---
+# --- Caso límite: programa con múltiples sentencias, todas válidas ---
 rol admin\nusuario juan asignar admin\nlogin juan password123\npermitir admin acceder dashboard | VALIDO
 
-# --- Casos inválidos: estructurales ---
+# --- Casos inválidos: estructurales (una sola sentencia, sin posibilidad
+#     de recuperación porque no hay nada más después en la entrada) ---
 usuario asignar admin | INVALIDO
 mfa juan volar | INVALIDO
 login juan | INVALIDO
 permitir admin | INVALIDO
 denegar | INVALIDO
+
+# =============================================================================
+# --- Caso PARCIAL: recuperación de errores en modo pánico ---
+# Es UNA SOLA entrada (una sola llamada a parse())
+# que integra varias sentencias, donde alguna sentencia intermedia es
+# inválida. El parser debe reportar el error de esa sentencia y, sin
+# detenerse, reconocer correctamente el resto de las sentencias válidas.
+# Esto es lo que distingue la recuperación real de la "recuperación" óptica
+# que se obtendría simplemente corriendo el test_runner línea por línea.
+# =============================================================================
+
+# Error en la sentencia del medio (def_usuario sin nombre): antes y después
+# hay sentencias válidas (def_rol y login) que deben seguir reconociéndose.
+rol admin\nusuario asignar admin\nlogin juan password123 | PARCIAL
