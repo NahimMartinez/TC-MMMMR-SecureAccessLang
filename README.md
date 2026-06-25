@@ -475,8 +475,7 @@ La gramática consta de veintidós producciones. El terminal `ID` es reconocido 
 
 ```text
 <programa>    ::= <lista_sentencias>
-<lista_sent.> ::= <sentencia>
-                | <sentencia> <lista_sent.>
+<lista_sentencias> ::= <sentencia> <lista_sentencias> | ε
 <sentencia>   ::= <def_rol> | <def_usuario>
                 | <login>   | <logout>
                 | <mfa>     | <permiso>
