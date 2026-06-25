@@ -152,11 +152,10 @@ class Parser:
         return Node('programa', sentencias=sentencias)
 
     # -------------------------------------------------------------------------
-    # PRODUCCIÓN: <lista_sentencias> -> <sentencia> | <sentencia> <lista_sentencias>
+    # PRODUCCIÓN: <lista_sentencias> -> <sentencia> <lista_sentencias> | ε
     # -------------------------------------------------------------------------
     # Analiza una o más sentencias seguidas. El bucle while implementa la
-    # recursión a derecha de la gramática de forma iterativa (equivalente
-    # formal, sin riesgo de desbordamiento de pila en programas largos).
+    # recursión a derecha de la gramática de forma iterativa
     # Continúa mientras haya tokens de inicio de sentencia disponibles.
     #
     # RECUPERACIÓN (modo pánico):
@@ -170,8 +169,8 @@ class Parser:
     # La sentencia que falló NO se agrega al AST: la lista resultante de
     # sentencias contiene únicamente las que se reconocieron correctamente.
     #
-    # FIRST(<lista_sentencias>) = { rol, usuario, login, logout, mfa, permitir, denegar }
-    # FOLLOW(<lista_sentencias>) = { $ }
+    # FIRST(<lista_sentencias>) = {ROL, USUARIO, LOGIN, LOGOUT, MFA, PERMITIR, DENEGAR, ε}
+    # FOLLOW(<lista_sentencias>) = {$}
     def parse_lista_sentencias(self):
         sentencias = []
 
